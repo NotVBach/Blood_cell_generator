@@ -11,3 +11,12 @@
 - Identify and quantify class imbalances.
 - Implement basic data augmentation and generative image technique.
 - Train functional CNN models then compare them with evaluated metrics.
+
+
+# Difficulties
+- Image has bounding boxes, can bbox be generated via smote
+- One image can have 2 cells, how to deal with that.
+- Convert to Json if have bounding box
+
+
+ssh bach@192.168.0.11

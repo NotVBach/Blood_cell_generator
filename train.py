@@ -4,10 +4,10 @@ import time
 import numpy as np
 from models import Encoder, Decoder
 from utils import free_params, biased_get_class
-from data_loader import load_mnist_data, preprocess_data, create_dataloader
+from data_loader import load_noaug_data, preprocess_data, create_dataloader
 from config import args
 
-def train_model(encoder, decoder, dataloader, device, args, img_file, lab_file, fold_idx):
+def train_model(encoder, decoder, dataloader, device, args, img_dir, ann_file):
     criterion = nn.MSELoss().to(device)
     enc_optim = torch.optim.Adam(encoder.parameters(), lr=args['lr'])
     dec_optim = torch.optim.Adam(decoder.parameters(), lr=args['lr'])
@@ -15,7 +15,7 @@ def train_model(encoder, decoder, dataloader, device, args, img_file, lab_file, 
     best_loss = np.inf
     t0 = time.time()
     
-    dec_x, dec_y = preprocess_data(img_file, lab_file)
+    dec_x, dec_y = preprocess_data(img_dir, ann_file)
     
     for epoch in range(args['epochs']):
         train_loss = 0.0
@@ -26,29 +26,37 @@ def train_model(encoder, decoder, dataloader, device, args, img_file, lab_file, 
         decoder.train()
         
         for images, labs in dataloader:
+            print(f'Batch images shape: {images.shape}')
             encoder.zero_grad()
             decoder.zero_grad()
             images, labs = images.to(device), labs.to(device)
             labsn = labs.detach().cpu().numpy()
             
-            # Forward pass
             z_hat = encoder(images)
             x_hat = decoder(z_hat)
             mse = criterion(x_hat, images)
             
-            # SMOTE-like augmentation
-            tc = np.random.choice(10, 1)[0]
+            # Adjust class range to 1–8 (dataset labels)
+            tc = np.random.choice(range(1, args['num_classes'] + 1), 1)[0]
+            print(f'Selected class: {tc}')
             xbeg, ybeg = biased_get_class(dec_x, dec_y, tc)
             xlen = len(xbeg)
+            print(f'Number of samples for class {tc}: {xlen}')
+            
+            if xlen == 0:
+                print(f'Warning: No samples for class {tc}, skipping SMOTE')
+                continue
+            
             nsamp = min(xlen, 100)
-            ind = np.random.choice(list(range(len(xbeg))), nsamp, replace=False)
+            ind = np.random.choice(list(range(xlen)), nsamp, replace=False)
+            print(f'Sampled indices type: {ind.dtype}, shape: {ind.shape}')
             xclass = xbeg[ind]
             yclass = ybeg[ind]
             
             xclen = len(xclass)
             xcminus = np.arange(1, xclen)
             xcplus = np.append(xcminus, 0)
-            xcnew = xclass[xcplus].reshape(xclen, 1, 28, 28)
+            xcnew = xclass[xcplus].reshape(xclen, args['n_channel'], args['image_size'], args['image_size'])
             
             xcnew = torch.Tensor(xcnew).to(device)
             xclass = torch.Tensor(xclass).to(device)
@@ -70,24 +78,21 @@ def train_model(encoder, decoder, dataloader, device, args, img_file, lab_file, 
             tmse_loss += mse.item() * images.size(0)
             tdiscr_loss += mse2.item() * images.size(0)
         
-        # Print average training statistics
         train_loss = train_loss / len(dataloader)
         tmse_loss = tmse_loss / len(dataloader)
         tdiscr_loss = tdiscr_loss / len(dataloader)
         print(f'Epoch: {epoch} \tTrain Loss: {train_loss:.6f} \tmse loss: {tmse_loss:.6f} \tmse2 loss: {tdiscr_loss:.6f}')
         
-        # Save best model
         if train_loss < best_loss and args['save']:
             print('Saving..')
-            path_enc = f'MNIST/models/crs5/{fold_idx}/bst_enc.pth'
-            path_dec = f'MNIST/models/crs5/{fold_idx}/bst_dec.pth'
+            path_enc = f'noaug/models/bst_enc.pth'
+            path_dec = f'noaug/models/bst_dec.pth'
             torch.save(encoder.state_dict(), path_enc)
             torch.save(decoder.state_dict(), path_dec)
             best_loss = train_loss
     
-    # Save final model
-    path_enc = f'MNIST/models/crs5/{fold_idx}/f_enc.pth'
-    path_dec = f'MNIST/models/crs5/{fold_idx}/f_dec.pth'
+    path_enc = f'noaug/models/f_enc.pth'
+    path_dec = f'noaug/models/f_dec.pth'
     print(path_enc)
     print(path_dec)
     torch.save(encoder.state_dict(), path_enc)
@@ -99,28 +104,24 @@ def train_model(encoder, decoder, dataloader, device, args, img_file, lab_file, 
 def main():
     t3 = time.time()
     
-    print(torch.version.cuda)
+    print(f'CUDA version: {torch.version.cuda}')
     
-    dtrnimg = 'MNIST/trn_img'
-    dtrnlab = 'MNIST/trn_lab'
+    data_dir = 'noaug/'
+    img_dir, ann_file = load_noaug_data(data_dir, split='train')
     
-    idtri_f, idtrl_f = load_mnist_data(dtrnimg, dtrnlab)
-    print(idtri_f)
-    print(idtrl_f)
+    print(f'Image dir: {img_dir}')
+    print(f'Annotation file: {ann_file}')
     
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    print(device)
+    print(f'Device: {device}')
     
-    for i in range(len(idtri_f)):
-        print(f'\nFold {i}')
-        encoder = Encoder(args).to(device)
-        decoder = Decoder(args).to(device)
-        
-        dataloader = create_dataloader(*preprocess_data(idtri_f[i], idtrl_f[i]), 
-                                     batch_size=args['batch_size'])
-        
-        if args['train']:
-            train_model(encoder, decoder, dataloader, device, args, idtri_f[i], idtrl_f[i], i)
+    encoder = Encoder(args).to(device)
+    decoder = Decoder(args).to(device)
+    
+    dataloader = create_dataloader(img_dir, ann_file, batch_size=args['batch_size'])
+    
+    if args['train']:
+        train_model(encoder, decoder, dataloader, device, args, img_dir, ann_file)
     
     t4 = time.time()
     print(f'final time(min): {(t4 - t3) / 60:.2f}')
