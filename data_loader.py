@@ -66,13 +66,20 @@ def preprocess_data(img_dir, ann_file):
     
     return images, labels
 
-def create_dataloader(img_dir, ann_file, batch_size=100, num_workers=0):
+def create_dataloader(img_dir, ann_file, batch_size, num_workers=0):
     transform = transforms.Compose([
         transforms.Resize((args['image_size'], args['image_size'])),
         transforms.ToTensor(),
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
     ])
+
+    transform = transforms.Compose([
+        transforms.Resize((args['image_size'], args['image_size'])),
+        transforms.ToTensor(),  # Converts to [0, 1], float32
+        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))  # Scales to [-1, 1]
+    ])
     
     dataset = LoadDataset(img_dir, ann_file, transform=transform)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers)
+    print("Load data successfully... \n")
     return dataloader

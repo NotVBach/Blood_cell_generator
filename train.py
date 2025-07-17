@@ -18,6 +18,7 @@ def train_model(encoder, decoder, dataloader, device, args, img_dir, ann_file):
     dec_x, dec_y = preprocess_data(img_dir, ann_file)
     
     for epoch in range(args['epochs']):
+        print("\nEpochs number: ", epoch)
         train_loss = 0.0
         tmse_loss = 0.0
         tdiscr_loss = 0.0
@@ -26,7 +27,7 @@ def train_model(encoder, decoder, dataloader, device, args, img_dir, ann_file):
         decoder.train()
         
         for images, labs in dataloader:
-            print(f'Batch images shape: {images.shape}')
+            # print(f'Batch images shape: {images.shape}')
             encoder.zero_grad()
             decoder.zero_grad()
             images, labs = images.to(device), labs.to(device)

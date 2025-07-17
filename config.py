@@ -25,10 +25,10 @@ args = {
     'lambda': 0.01,         # hyper param for weight of discriminator loss
     'lr': 0.0002,           # learning rate for Adam optimizer
     'epochs': 2,          # how many epochs to run for training
-    'batch_size': 100,      # batch size for SGD
+    'batch_size': 8,      # batch size for SGD
     'save': True,           # save weights at each epoch if True
     'train': True,          # train networks if True, else load networks
     'dataset': 'noaug',     # specify the dataset
-    'image_size': 603,       # resize images to this size
+    'image_size': 32,       # resize images to this size
     'num_classes': 8        # number of defect classes (1–8)
 }
