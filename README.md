@@ -18,5 +18,18 @@
 - One image can have 2 cells, how to deal with that.
 - Convert to Json if have bounding box
 
+## Requirement
+- Python 3.6
+- 
 
 ssh bach@192.168.0.11
+
+## set up
+conda create -n smote python=3.6
+conda activate smote
+conda install cudatoolkit=10.1 -c anaconda -y
+nvidia-smi
+pip install torch==1.4.0 torchvision==0.5.0
+conda install scikit-learn=0.24.1 numpy=1.17
+python -c"import pytorch; torch.cuda.is_available()"
+

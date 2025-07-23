@@ -27,7 +27,7 @@ def train_model(encoder, decoder, dataloader, device, args, img_dir, ann_file):
         decoder.train()
         
         for images, labs in dataloader:
-            # print(f'Batch images shape: {images.shape}')
+            print(f"Batch images shape: {images.shape}, labels shape: {labs.shape}")
             encoder.zero_grad()
             decoder.zero_grad()
             images, labs = images.to(device), labs.to(device)
@@ -42,6 +42,7 @@ def train_model(encoder, decoder, dataloader, device, args, img_dir, ann_file):
             print(f'Selected class: {tc}')
             xbeg, ybeg = biased_get_class(dec_x, dec_y, tc)
             xlen = len(xbeg)
+            print(xlen)
             print(f'Number of samples for class {tc}: {xlen}')
             
             if xlen == 0:

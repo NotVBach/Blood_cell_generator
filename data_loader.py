@@ -36,12 +36,14 @@ class LoadDataset(Dataset):
         
         label = self.labels.get(img_id, 0)  # Default to 0 if no label
         return image, label
-
+    
+# Processing path
 def load_noaug_data(data_dir, split):
     img_dir = os.path.join(data_dir, split)
     ann_file = os.path.join(data_dir, 'annotations', f'{split}.json')
     return img_dir, ann_file
 
+# Processing image 
 def preprocess_data(img_dir, ann_file):
     transform = transforms.Compose([
         transforms.Resize((args['image_size'], args['image_size'])),
@@ -66,17 +68,12 @@ def preprocess_data(img_dir, ann_file):
     
     return images, labels
 
+# Processing image but ouptput is tensor dataset withc batch
 def create_dataloader(img_dir, ann_file, batch_size, num_workers=0):
     transform = transforms.Compose([
         transforms.Resize((args['image_size'], args['image_size'])),
         transforms.ToTensor(),
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
-    ])
-
-    transform = transforms.Compose([
-        transforms.Resize((args['image_size'], args['image_size'])),
-        transforms.ToTensor(),  # Converts to [0, 1], float32
-        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))  # Scales to [-1, 1]
     ])
     
     dataset = LoadDataset(img_dir, ann_file, transform=transform)
