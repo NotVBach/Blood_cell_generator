@@ -4,7 +4,7 @@ import time
 import numpy as np
 from models import Encoder, Decoder
 from utils import free_params, biased_get_class
-from data_loader import load_noaug_data, preprocess_data, create_dataloader
+from data_loader import load_data, preprocess_data, create_dataloader
 from config import args
 
 def train_model(encoder, decoder, dataloader, device, args, img_dir, ann_file):
@@ -18,7 +18,6 @@ def train_model(encoder, decoder, dataloader, device, args, img_dir, ann_file):
     dec_x, dec_y = preprocess_data(img_dir, ann_file)
     
     for epoch in range(args['epochs']):
-        print("\nEpochs number: ", epoch)
         train_loss = 0.0
         tmse_loss = 0.0
         tdiscr_loss = 0.0
@@ -27,7 +26,7 @@ def train_model(encoder, decoder, dataloader, device, args, img_dir, ann_file):
         decoder.train()
         
         for images, labs in dataloader:
-            print(f"Batch images shape: {images.shape}, labels shape: {labs.shape}")
+            # print(f'Batch images shape: {images.shape}')  # Debug
             encoder.zero_grad()
             decoder.zero_grad()
             images, labs = images.to(device), labs.to(device)
@@ -37,21 +36,15 @@ def train_model(encoder, decoder, dataloader, device, args, img_dir, ann_file):
             x_hat = decoder(z_hat)
             mse = criterion(x_hat, images)
             
-            # Adjust class range to 1–8 (dataset labels)
+            # Select class from 1 to num_classes (1–8)
             tc = np.random.choice(range(1, args['num_classes'] + 1), 1)[0]
-            print(f'Selected class: {tc}')
             xbeg, ybeg = biased_get_class(dec_x, dec_y, tc)
             xlen = len(xbeg)
-            print(xlen)
-            print(f'Number of samples for class {tc}: {xlen}')
-            
             if xlen == 0:
-                print(f'Warning: No samples for class {tc}, skipping SMOTE')
-                continue
-            
+                print(f'Warning: No samples for class {tc}, skipping...')
+                continue  # Skip if class has no samples
             nsamp = min(xlen, 100)
             ind = np.random.choice(list(range(xlen)), nsamp, replace=False)
-            print(f'Sampled indices type: {ind.dtype}, shape: {ind.shape}')
             xclass = xbeg[ind]
             yclass = ybeg[ind]
             
@@ -109,7 +102,7 @@ def main():
     print(f'CUDA version: {torch.version.cuda}')
     
     data_dir = 'noaug/'
-    img_dir, ann_file = load_noaug_data(data_dir, split='train')
+    img_dir, ann_file = load_data(data_dir, split='train')
     
     print(f'Image dir: {img_dir}')
     print(f'Annotation file: {ann_file}')

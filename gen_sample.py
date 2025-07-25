@@ -3,8 +3,8 @@ import numpy as np
 import os
 import collections
 from models import Encoder, Decoder
-from utils import biased_get_class, G_SM, compute_imbal, save_images
-from data_loader import load_noaug_data, preprocess_data
+from utils import biased_get_class, G_SM, save_images, compute_imbal
+from data_loader import preprocess_data, load_data
 from config import args
 import time
 
@@ -19,26 +19,30 @@ def generate_samples(img_dir, ann_file, enc_file, dec_file, device, imbal):
     encoder.eval()
     decoder.eval()
     
-    classes = tuple(str(i) for i in range(1, args['num_classes'] + 1))
+    # classes = tuple(str(i) for i in range(1, args['num_classes'] + 1))
     resx = []
     resy = []
     
     for i in range(1, args['num_classes'] + 1):
-        xclass, yclass = biased_get_class(dec_x, dec_y, i)
+        xclass, yclass = biased_get_class(dec_x, dec_y, i) # 
         print(f'Class {i}: xclass shape: {xclass.shape}, yclass[0]: {yclass[0]}')
+        if len(xclass) == 0:
+            print(f'Warning: No samples for class {i}, skipping...')
+            continue
         
         xclass = torch.Tensor(xclass).to(device)
+        print(f'xclass tensor shape: {xclass.shape}')
         xclass_enc = encoder(xclass)
         xclass_enc = xclass_enc.detach().cpu().numpy()
+        
+        n =  np.max(imbal) - imbal[i - 1]
 
-        print(xclass.shape[0])
-        
-        n = imbal[0] - xclass.shape[0]  # Number of samples needed
-        if n <= 0:
-            print(f'Skipping class {i}: no synthetic samples needed (n={n})')
-            continue  # Skip classes that don't need synthetic samples
-        
-        xsamp, ysamp = G_SM(xclass_enc, yclass, n, i)
+        # If the class is majority
+        if n == 0:
+            print(f'No samples needed for class {i}, skipping...')
+            continue
+
+        xsamp, ysamp = G_SM(xclass_enc, yclass, n, i) # Generate synthetic samples
         print(f'Synthetic samples shape: {xsamp.shape}, labels length: {len(ysamp)}')
         ysamp = np.array(ysamp)
         print(f'ysamp shape: {ysamp.shape}')
@@ -46,46 +50,39 @@ def generate_samples(img_dir, ann_file, enc_file, dec_file, device, imbal):
         xsamp = torch.Tensor(xsamp).to(device)
         ximg = decoder(xsamp)
         ximn = ximg.detach().cpu().numpy()
-        print(f'Decoded images shape: {ximn.shape}')
+        # print(f'Decoded images shape: {ximn.shape}')
         
         resx.append(ximn)
         resy.append(ysamp)
     
     if not resx:
-        print('No samples generated')
-        resx1 = np.array([])
-        resy1 = np.array([])
-    else:
-        resx1 = np.vstack(resx)
-        resy1 = np.hstack(resy)
-        print(f'Generate images shape: {resx1.shape}')
-        print(f'Generate labels shape: {resy1.shape}')
-        
-        # Save synthetic images as .jpg files
-        output_dir = 'noaug/synthetic_images/'
-        save_images(resx1, resy1, output_dir, image_size=args['image_size'])
+        print('No synthetic samples generated')
+        return
     
-    # Combine with real data (even if no synthetic samples)
-    dec_x1 = dec_x.reshape(dec_x.shape[0], -1)
-    print(f'Reshaped real images: {dec_x1.shape}')
+    resx1 = np.vstack(resx)
+    resy1 = np.hstack(resy)
+
+    output_dir = 'noaug/synthetic_images/'
+    save_images(resx1, resy1, output_dir, prefix='synth')
     
-    if resx1.size > 0:
-        resx1 = resx1.reshape(resx1.shape[0], -1)
-        print(f'Reshaped synthetic images: {resx1.shape}')
-        combx = np.vstack((resx1, dec_x1))
-        comby = np.hstack((resy1, dec_y))
-    else:
-        combx = dec_x1
-        comby = dec_y
-    print(f'Final combined images shape: {combx.shape}')
-    print(f'Final combined labels shape: {comby.shape}')
+    # Save as text file (Optional)
+
+    # resx1 = resx1.reshape(resx1.shape[0], -1)
+    # dec_x1 = dec_x.reshape(dec_x.shape[0], -1)
+    # print(f'Reshaped synthetic images: {resx1.shape}')
+    # print(f'Reshaped real images: {dec_x1.shape}')
     
-    ifile = f'noaug/models/trn_img.txt'
-    lfile = f'noaug/models/trn_lab.txt'
-    np.savetxt(ifile, combx)
-    np.savetxt(lfile, comby)
-    print(f'Saved images to {ifile}')
-    print(f'Saved labels to {lfile}')
+    # combx = np.vstack((resx1, dec_x1))
+    # comby = np.hstack((resy1, dec_y))
+    # print(f'Final combined images shape: {combx.shape}')
+    # print(f'Final combined labels shape: {comby.shape}')
+    
+    # ifile = f'noaug/trn_img_f/0_trn_img.txt'
+    # lfile = f'noaug/trn_lab_f/0_trn_lab.txt'
+    # np.savetxt(ifile, combx)
+    # np.savetxt(lfile, comby)
+    # print(f'Saved images to {ifile}')
+    # print(f'Saved labels to {lfile}')
 
 def main():
     t0 = time.time()
@@ -93,7 +90,7 @@ def main():
     print(f'CUDA version: {torch.version.cuda}')
     
     data_dir = 'noaug/'
-    img_dir, ann_file = load_noaug_data(data_dir, split='train')
+    img_dir, ann_file = load_data(data_dir, split='train')
     
     print(f'Image dir: {img_dir}')
     print(f'Annotation file: {ann_file}')
@@ -106,6 +103,7 @@ def main():
     print(f'Device: {device}')
     
     imbal = compute_imbal(ann_file, num_classes=args['num_classes'])
+    
     
     generate_samples(img_dir, ann_file, enc_file, dec_file, device, imbal)
     
