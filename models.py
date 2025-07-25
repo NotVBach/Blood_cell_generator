@@ -23,17 +23,20 @@ class Encoder(nn.Module):
             nn.BatchNorm2d(self.dim_h * 8),
             nn.LeakyReLU(0.2, inplace=True)
         )
-        conv_out_size = self.image_size // (2 ** 4)
+        conv_out_size = self.image_size // (2 ** 4) 
         self.fc = nn.Linear(self.dim_h * 8 * conv_out_size * conv_out_size, self.n_z)
 
     def forward(self, x):
-        print(f"Encoder input shape: {x.shape}")
+        # torch.Size([batch_size, n_channel, image_size, image_size])
+        # torch.Size([100, 3, 64, 64])
         x = self.conv(x)
-        print(f"Encoder after conv shape: {x.shape}")
-        x = x.squeeze()
-        print(f"Encoder after squeeze shape: {x.shape}")
+        print('After conv:', x.shape)
+        # torch.Size([100, 512, 4, 4])
+        x = x.view(x.size(0), -1)
+        # torch.Size([100, 8192])
         x = self.fc(x)
-        print(f"Encoder output shape: {x.shape}")
+        # torch.Size([100, 300])
+        # n_z = 300
         return x
 
 class Decoder(nn.Module):
@@ -45,7 +48,7 @@ class Decoder(nn.Module):
         self.n_z = args['n_z']
         self.image_size = args['image_size']
 
-        deconv_in_size = self.image_size // (2 ** 3)
+        deconv_in_size = self.image_size // (2 ** 3)  # 32 / 8 = 4
         self.fc = nn.Sequential(
             nn.Linear(self.n_z, self.dim_h * 8 * deconv_in_size * deconv_in_size),
             nn.ReLU()
@@ -63,10 +66,10 @@ class Decoder(nn.Module):
         )
 
     def forward(self, x):
-        print(f"Decoder input shape: {x.shape}")
+        # torch.Size([100, 300])
         x = self.fc(x)
         x = x.view(-1, self.dim_h * 8, self.image_size // 8, self.image_size // 8)
-        print(f"Decoder after reshape shape: {x.shape}")
+        # torch.Size([100, 512, 8, 8])
         x = self.deconv(x)
-        print(f"Decoder output shape: {x.shape}")
+        # torch.Size([100, 3, 64, 64])
         return x
