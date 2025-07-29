@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import math
 
 class Encoder(nn.Module):
     def __init__(self, args):
@@ -8,6 +9,7 @@ class Encoder(nn.Module):
         self.n_channel = args['n_channel']
         self.dim_h = args['dim_h']
         self.n_z = args['n_z']
+        self.bbox_dim = args['bbox_dim']
         self.image_size = args['image_size']
         
         self.conv = nn.Sequential(
@@ -23,18 +25,25 @@ class Encoder(nn.Module):
             nn.BatchNorm2d(self.dim_h * 8),
             nn.LeakyReLU(0.2, inplace=True)
         )
-        conv_out_size = self.image_size // (2 ** 4) 
-        self.fc = nn.Linear(self.dim_h * 8 * conv_out_size * conv_out_size, self.n_z)
 
-    def forward(self, x):
+        # Compute final feature map size
+        conv_out_size = (self.image_size[0] // 16, self.image_size[1] // 16)
+        self.fc = nn.Linear(self.dim_h * 8 * conv_out_size[0] * conv_out_size[1] + self.bbox_dim, 
+                           self.n_z + self.bbox_dim)
+
+    def forward(self, x, bbox):
         # torch.Size([batch_size, n_channel, image_size, image_size])
         # torch.Size([100, 3, 64, 64])
         x = self.conv(x)
-        print('After conv:', x.shape)
+
         # torch.Size([100, 512, 4, 4])
         x = x.view(x.size(0), -1)
+
+        x = torch.cat([x, bbox], dim=1)
+
         # torch.Size([100, 8192])
         x = self.fc(x)
+
         # torch.Size([100, 300])
         # n_z = 300
         return x
@@ -46,30 +55,45 @@ class Decoder(nn.Module):
         self.n_channel = args['n_channel']
         self.dim_h = args['dim_h']
         self.n_z = args['n_z']
+        self.bbox_dim = args['bbox_dim']
         self.image_size = args['image_size']
-
-        deconv_in_size = self.image_size // (2 ** 3)  # 32 / 8 = 4
+        
+        # Compute initial feature map size for deconv
+        self.deconv_in_size = (self.image_size[0] // 16, self.image_size[1] // 16)
+        
         self.fc = nn.Sequential(
-            nn.Linear(self.n_z, self.dim_h * 8 * deconv_in_size * deconv_in_size),
+            nn.Linear(self.n_z + self.bbox_dim, self.dim_h * 8 * self.deconv_in_size[0] * self.deconv_in_size[1]),
             nn.ReLU()
         )
-
         self.deconv = nn.Sequential(
-            nn.ConvTranspose2d(self.dim_h * 8, self.dim_h * 4, 4, stride=2, padding=1),
+            nn.ConvTranspose2d(self.dim_h * 8, self.dim_h * 4, 4, 2, 1),
             nn.BatchNorm2d(self.dim_h * 4),
             nn.ReLU(True),
-            nn.ConvTranspose2d(self.dim_h * 4, self.dim_h * 2, 4, stride=2, padding=1),
+            nn.ConvTranspose2d(self.dim_h * 4, self.dim_h * 2, 4, 2, 1),
             nn.BatchNorm2d(self.dim_h * 2),
             nn.ReLU(True),
-            nn.ConvTranspose2d(self.dim_h * 2, self.n_channel, 4, stride=2, padding=1),
+            nn.ConvTranspose2d(self.dim_h * 2, self.dim_h, 4, 2, 1),
+            nn.BatchNorm2d(self.dim_h),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(self.dim_h, self.n_channel, 4, 2, 1),
             nn.Tanh()
+        )
+
+        self.bbox_head = nn.Sequential(
+            nn.Linear(self.n_z + self.bbox_dim, 128),
+            nn.ReLU(),
+            nn.Linear(128, self.bbox_dim),
+            nn.Sigmoid()
         )
 
     def forward(self, x):
         # torch.Size([100, 300])
-        x = self.fc(x)
-        x = x.view(-1, self.dim_h * 8, self.image_size // 8, self.image_size // 8)
+        img = self.fc(x)
+
         # torch.Size([100, 512, 8, 8])
-        x = self.deconv(x)
+        img = img.view(-1, self.dim_h * 8, self.deconv_in_size[0], self.deconv_in_size[1])
+
         # torch.Size([100, 3, 64, 64])
-        return x
+        img = self.deconv(img)
+        bbox = self.bbox_head(x)
+        return img, bbox

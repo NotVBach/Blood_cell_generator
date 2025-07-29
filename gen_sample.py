@@ -1,114 +1,141 @@
+import collections
 import torch
 import numpy as np
 import os
-import collections
-from models import Encoder, Decoder
-from utils import biased_get_class, G_SM, save_images, compute_imbal
-from data_loader import preprocess_data, load_data
-from config import args
 import time
+import json
+from PIL import Image
+from models import Encoder, Decoder
+from utils import G_SM1, biased_get_class1, NumpyEncoder
+from data_loader import load_data
+from config import args
 
-def generate_samples(img_dir, ann_file, enc_file, dec_file, device, imbal):
-    dec_x, dec_y = preprocess_data(img_dir, ann_file)
-    
-    encoder = Encoder(args).to(device)
-    encoder.load_state_dict(torch.load(enc_file), strict=False)
-    decoder = Decoder(args).to(device)
-    decoder.load_state_dict(torch.load(dec_file), strict=False)
-    
-    encoder.eval()
-    decoder.eval()
-    
-    # classes = tuple(str(i) for i in range(1, args['num_classes'] + 1))
-    resx = []
-    resy = []
-    
-    for i in range(1, args['num_classes'] + 1):
-        xclass, yclass = biased_get_class(dec_x, dec_y, i) # 
-        print(f'Class {i}: xclass shape: {xclass.shape}, yclass[0]: {yclass[0]}')
-        if len(xclass) == 0:
-            print(f'Warning: No samples for class {i}, skipping...')
-            continue
-        
-        xclass = torch.Tensor(xclass).to(device)
-        print(f'xclass tensor shape: {xclass.shape}')
-        xclass_enc = encoder(xclass)
-        xclass_enc = xclass_enc.detach().cpu().numpy()
-        
-        n =  np.max(imbal) - imbal[i - 1]
+# Override args for generation
+args['train'] = False
+args['epochs'] = 1
 
-        # If the class is majority
-        if n == 0:
-            print(f'No samples needed for class {i}, skipping...')
-            continue
+# Print CUDA version
+print(torch.version.cuda)
 
-        xsamp, ysamp = G_SM(xclass_enc, yclass, n, i) # Generate synthetic samples
-        print(f'Synthetic samples shape: {xsamp.shape}, labels length: {len(ysamp)}')
-        ysamp = np.array(ysamp)
-        print(f'ysamp shape: {ysamp.shape}')
+t0 = time.time()
+
+# Paths
+base_dir = args['base_dir']
+dtrnimg = os.path.join(base_dir, 'train')
+modpth = os.path.join(base_dir, 'models')
+out_img_dir = os.path.join(base_dir, 'augmented', 'train')
+out_lab_dir = os.path.join(base_dir, 'augmented', 'annotations')
+
+os.makedirs(out_img_dir, exist_ok=True)
+os.makedirs(out_lab_dir, exist_ok=True)
+
+# Load data
+image_files, labels, bboxes, transform, data = load_data(
+    base_dir, 'train', image_size=args['image_size'], n_channel=args['n_channel']
+)
+print(f"Loaded {len(image_files)} images, label distribution: {collections.Counter(labels)}")
+print(f"Images shape: {len(image_files)}, Bboxes shape: {bboxes.shape}")
+
+# Load images
+images = np.array([transform(Image.open(p).convert('RGB')).numpy() for p in image_files])
+
+# Device setup
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+print(f"Using device: {device}")
+
+# Load pre-trained models
+path_enc = os.path.join(modpth, 'bst_enc.pth')
+path_dec = os.path.join(modpth, 'bst_dec.pth')
+encoder = Encoder(args).to(device)
+decoder = Decoder(args).to(device)
+encoder.load_state_dict(torch.load(path_enc, map_location=device), strict=True)
+decoder.load_state_dict(torch.load(path_dec, map_location=device), strict=True)
+encoder.eval()
+decoder.eval()
+
+# Balance classes
+max_samples = max(collections.Counter(labels).values())
+imbal = [max_samples] * 8
+resx, resy, res_bboxes = [], [], []
+new_annotations = data['images'].copy()
+new_anns = data['annotations'].copy()
+new_image_id = max(img['id'] for img in data['images']) + 1
+new_annotation_id = max(ann['id'] for ann in data['annotations']) + 1
+
+# Generate synthetic samples
+image_size_scalar = args['image_size'][0]  # Assume square images for simplicity
+for i in range(1, 9):
+    xclass, yclass, bbox_class = biased_get_class1(i, images, labels, bboxes)
+    print(f"Class {i} shape: {xclass.shape}, Bboxes: {bbox_class.shape}")
+    
+    xclass_t = torch.tensor(xclass, dtype=torch.float32).to(device)
+    bbox_class_t = torch.tensor(bbox_class, dtype=torch.float32).to(device)
+    with torch.no_grad():
+        z_class = encoder(xclass_t, bbox_class_t).cpu().numpy()
+    
+    n = imbal[i-1] - len(yclass)
+    if n > 0:
+        xsamp, ysamp, bbox_samp = G_SM1(z_class[:, :-args['bbox_dim']], yclass, bbox_class, n, i)
+        xsamp = torch.tensor(np.concatenate([xsamp, bbox_samp], axis=1), dtype=torch.float32).to(device)
         
-        xsamp = torch.Tensor(xsamp).to(device)
-        ximg = decoder(xsamp)
-        ximn = ximg.detach().cpu().numpy()
-        # print(f'Decoded images shape: {ximn.shape}')
+        ximg_all, bbox_img_all = [], []
+        for j in range(0, len(xsamp), args['batch_size']):
+            batch = xsamp[j:j+args['batch_size']]
+            with torch.no_grad():
+                ximg, bbox_img = decoder(batch)
+            ximg_all.append(ximg.cpu().numpy())
+            bbox_img_all.append(bbox_img.cpu().numpy())
+        ximn = np.concatenate(ximg_all, axis=0)
+        bbox_img = np.concatenate(bbox_img_all, axis=0)
+        print(f"Decoded images: {ximn.shape}, Bboxes: {bbox_img.shape}")
+        
+        # Save synthetic images and update annotations
+        for idx, (img, bbox) in enumerate(zip(ximn, bbox_img)):
+            img = (img * 0.5 + 0.5).clip(0, 1)
+            img = (img * 255).astype(np.uint8).transpose(1, 2, 0)
+            img_pil = Image.fromarray(img)
+            img_name = f"synthetic_{i}_{idx}.png"
+            img_pil.save(os.path.join(out_img_dir, img_name))
+            
+            new_annotations.append({
+                'file_name': img_name,
+                'height': args['image_size'][0],
+                'width': args['image_size'][1],
+                'id': new_image_id
+            })
+            new_anns.append({
+                'id': new_annotation_id,
+                'image_id': new_image_id,
+                'bbox': [float(x) for x in (bbox * np.array([image_size_scalar] * 4))],
+                'area': float(bbox[2] * bbox[3] * image_size_scalar * image_size_scalar),
+                'iscrowd': 0,
+                'category_id': i,
+                'segmentation': []
+            })
+            new_image_id += 1
+            new_annotation_id += 1
         
         resx.append(ximn)
-        resy.append(ysamp)
-    
-    if not resx:
-        print('No synthetic samples generated')
-        return
-    
-    resx1 = np.vstack(resx)
-    resy1 = np.hstack(resy)
+        resy.append(np.array(ysamp))
+        res_bboxes.append(bbox_img)
 
-    output_dir = 'noaug/synthetic_images/'
-    save_images(resx1, resy1, output_dir, prefix='synth')
-    
-    # Save as text file (Optional)
+# Combine and save
+resx1 = np.vstack(resx) if resx else np.array([])
+resy1 = np.hstack(resy) if resy else np.array([])
+res_bboxes1 = np.vstack(res_bboxes) if res_bboxes else np.array([])
+print(f"Synthetic images: {resx1.shape}, Labels: {resy1.shape}, Bboxes: {res_bboxes1.shape}")
 
-    # resx1 = resx1.reshape(resx1.shape[0], -1)
-    # dec_x1 = dec_x.reshape(dec_x.shape[0], -1)
-    # print(f'Reshaped synthetic images: {resx1.shape}')
-    # print(f'Reshaped real images: {dec_x1.shape}')
-    
-    # combx = np.vstack((resx1, dec_x1))
-    # comby = np.hstack((resy1, dec_y))
-    # print(f'Final combined images shape: {combx.shape}')
-    # print(f'Final combined labels shape: {comby.shape}')
-    
-    # ifile = f'noaug/trn_img_f/0_trn_img.txt'
-    # lfile = f'noaug/trn_lab_f/0_trn_lab.txt'
-    # np.savetxt(ifile, combx)
-    # np.savetxt(lfile, comby)
-    # print(f'Saved images to {ifile}')
-    # print(f'Saved labels to {lfile}')
+data['images'] = new_annotations
+data['annotations'] = new_anns
+with open(os.path.join(out_lab_dir, 'train_augmented.json'), 'w') as f:
+    json.dump(data, f, indent=2, cls=NumpyEncoder)
+print(f"Saved augmented annotations to {out_lab_dir}/train_augmented.json")
 
-def main():
-    t0 = time.time()
-    
-    print(f'CUDA version: {torch.version.cuda}')
-    
-    data_dir = 'noaug/'
-    img_dir, ann_file = load_data(data_dir, split='train')
-    
-    print(f'Image dir: {img_dir}')
-    print(f'Annotation file: {ann_file}')
-    
-    modpth = 'noaug/models'
-    enc_file = os.path.join(modpth, 'bst_enc.pth')
-    dec_file = os.path.join(modpth, 'bst_dec.pth')
-    
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    print(f'Device: {device}')
-    
-    imbal = compute_imbal(ann_file, num_classes=args['num_classes'])
-    
-    
-    generate_samples(img_dir, ann_file, enc_file, dec_file, device, imbal)
-    
-    t1 = time.time()
-    print(f'Final time (min): {(t1 - t0) / 60:.2f}')
+# Copy original images
+for img in data['images']:
+    img_path = os.path.join(dtrnimg, img['file_name'])
+    img_name = os.path.basename(img_path)
+    Image.open(img_path).save(os.path.join(out_img_dir, img_name))
 
-if __name__ == '__main__':
-    main()
+t1 = time.time()
+print(f"Total time (min): {(t1 - t0) / 60:.2f}")
