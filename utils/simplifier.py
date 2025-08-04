@@ -6,8 +6,8 @@ Simplify the problem by delete every images with 2 or more annotations.
 '''
 
 # Paths
-json_path = '../noaug/annotations/train.json'
-train_dir = '../noaug/train'
+json_path = 'noaug/annotations/train.json'
+train_dir = 'noaug/train'
 
 with open(json_path, 'r') as f:
     data = json.load(f)
@@ -27,7 +27,7 @@ for img in data['images']:
         image_path = os.path.join(train_dir, img['file_name'])
         if os.path.exists(image_path):
             os.remove(image_path)
-            print(f"Deleted image: {image_path}")
+            # print(f"Deleted image: {image_path}")
         else:
             print(f"Image not found: {image_path}")
 
