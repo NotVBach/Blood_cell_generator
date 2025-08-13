@@ -9,7 +9,6 @@ class Encoder(nn.Module):
         self.n_channel = args['n_channel']
         self.dim_h = args['dim_h']
         self.n_z = args['n_z']
-        self.bbox_dim = args['bbox_dim']
         self.image_size = args['image_size']
         
         self.conv = nn.Sequential(
@@ -28,10 +27,9 @@ class Encoder(nn.Module):
 
         # Compute final feature map size
         conv_out_size = (self.image_size[0] // 16, self.image_size[1] // 16)
-        self.fc = nn.Linear(self.dim_h * 8 * conv_out_size[0] * conv_out_size[1] + self.bbox_dim, 
-                           self.n_z + self.bbox_dim)
+        self.fc = nn.Linear(self.dim_h * 8 * conv_out_size[0] * conv_out_size[1], self.n_z)
 
-    def forward(self, x, bbox):
+    def forward(self, x):
         # torch.Size([batch_size, n_channel, image_size, image_size])
         # torch.Size([100, 3, 64, 64])
         x = self.conv(x)
@@ -39,13 +37,12 @@ class Encoder(nn.Module):
         # torch.Size([100, 512, 4, 4])
         x = x.view(x.size(0), -1)
 
-        x = torch.cat([x, bbox], dim=1)
-
         # torch.Size([100, 8192])
         x = self.fc(x)
 
         # torch.Size([100, 300])
         # n_z = 300
+
         return x
 
 class Decoder(nn.Module):
@@ -55,14 +52,13 @@ class Decoder(nn.Module):
         self.n_channel = args['n_channel']
         self.dim_h = args['dim_h']
         self.n_z = args['n_z']
-        self.bbox_dim = args['bbox_dim']
         self.image_size = args['image_size']
         
         # Compute initial feature map size for deconv
         self.deconv_in_size = (self.image_size[0] // 16, self.image_size[1] // 16)
         
         self.fc = nn.Sequential(
-            nn.Linear(self.n_z + self.bbox_dim, self.dim_h * 8 * self.deconv_in_size[0] * self.deconv_in_size[1]),
+            nn.Linear(self.n_z, self.dim_h * 8 * self.deconv_in_size[0] * self.deconv_in_size[1]),
             nn.ReLU()
         )
         self.deconv = nn.Sequential(
@@ -79,13 +75,6 @@ class Decoder(nn.Module):
             nn.Tanh()
         )
 
-        self.bbox_head = nn.Sequential(
-            nn.Linear(self.n_z + self.bbox_dim, 128),
-            nn.ReLU(),
-            nn.Linear(128, self.bbox_dim),
-            nn.Sigmoid()
-        )
-
     def forward(self, x):
         # torch.Size([100, 300])
         img = self.fc(x)
@@ -95,5 +84,4 @@ class Decoder(nn.Module):
 
         # torch.Size([100, 3, 64, 64])
         img = self.deconv(img)
-        bbox = self.bbox_head(x)
-        return img, bbox
+        return img
