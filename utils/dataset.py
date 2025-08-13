@@ -7,10 +7,9 @@ import json
 import numpy as np
 
 class CustomDataset(Dataset):
-    def __init__(self, image_files, labels, bboxes, transform):
+    def __init__(self, image_files, labels, transform):
         self.image_files = image_files
         self.labels = labels
-        self.bboxes = bboxes
         self.transform = transform
     
     def __len__(self):
@@ -20,8 +19,7 @@ class CustomDataset(Dataset):
         img = Image.open(self.image_files[idx]).convert('RGB')
         img = self.transform(img)
         label = self.labels[idx]
-        bbox = self.bboxes[idx]
-        return img, label, bbox
+        return img, label
 
 def load_data(base_dir, split='train', image_size=(32, 32), n_channel=3):
     dtrnimg = os.path.join(base_dir, split)
@@ -38,20 +36,19 @@ def load_data(base_dir, split='train', image_size=(32, 32), n_channel=3):
 
     image_id_to_filename = {img['id']: img['file_name'] for img in data['images']}
     image_id_to_label = {}
-    image_id_to_bbox = {}
     for ann in data['annotations']:
         img_id = ann['image_id']
-        if img_id not in image_id_to_label:
-            img_info = next(img for img in data['images'] if img['id'] == img_id)
-            width, height = img_info['width'], img_info['height']
-            bbox = ann['bbox']
-            norm_bbox = [bbox[0]/width, bbox[1]/height, bbox[2]/width, bbox[3]/height]
+        if img_id in image_id_to_filename:
             image_id_to_label[img_id] = ann['category_id']
-            image_id_to_bbox[img_id] = norm_bbox
 
+    valid_image_ids = list(image_id_to_label.keys())
     image_files = [os.path.join(dtrnimg, image_id_to_filename[img_id]) 
-                   for img_id in image_id_to_label]
-    labels = np.array([image_id_to_label[img_id] for img_id in image_id_to_label])
-    bboxes = np.array([image_id_to_bbox[img_id] for img_id in image_id_to_label])
-    
-    return image_files, labels, bboxes, transform, data
+                   for img_id in valid_image_ids]
+    labels = np.array([image_id_to_label[img_id] for img_id in valid_image_ids])
+
+    assert len(image_files) == len(labels), (
+        f"Array size mismatch: image_files ({len(image_files)}), labels ({len(labels)})"
+    )
+
+    print(f"Loaded {len(image_files)} images with annotations")
+    return image_files, labels, transform, data
