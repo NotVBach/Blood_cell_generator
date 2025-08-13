@@ -15,7 +15,7 @@ def main():
     args['method'] = args_cmd.method
     args['train'] = args_cmd.mode == 'train'
     args['image_size'] = tuple(args_cmd.image_size)
-    args['output_dir'] = os.path.join(args['base_dir'], 'synthetic', args['method'])
+    args['output_dir'] = os.path.join('synthetic', args['method'])
 
     if args['method'] == 'deep_smote':
         if args['train']:
