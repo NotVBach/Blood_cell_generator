@@ -12,7 +12,7 @@
 `conda env create -f environment.yml`
 
 ## How to run
-`python main.py --method deep_smote --mode train`
-`python main.py --method deep_smote --mode generate`
-`python main.py --method balance_gan --mode train`
-`python main.py --method balance_gan --mode generate`
+- `python main.py --method deep_smote --mode train`
+- `python main.py --method deep_smote --mode generate`
+- `python main.py --method balance_gan --mode train`
+- `python main.py --method balance_gan --mode generate`
