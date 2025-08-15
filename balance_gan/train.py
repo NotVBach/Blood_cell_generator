@@ -4,10 +4,12 @@ from torch.utils.data import DataLoader
 import numpy as np
 import os
 import time
-import collections
 import sys
+import collections
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from balance_gan.models import Generator, Discriminator
+
+from PIL import Image
+from balance_gan.models import Autoencoder, Generator, Discriminator
 from utils.dataset import CustomDataset, load_data
 from utils.save_losses import save_losses
 from utils.plot_losses import plot_losses
@@ -20,32 +22,61 @@ t0 = time.time()
 
 # Paths
 base_dir = args['base_dir']
-modpth = os.path.join(base_dir, 'models', 'balance_gan')
+modpth = os.path.join(args['output_dir'], 'models')
 os.makedirs(modpth, exist_ok=True)
 
 # Load data
-image_files, labels, bboxes, transform, _ = load_data(
+image_files, labels, transform, _ = load_data(
     base_dir, 'train', image_size=args['image_size'], n_channel=args['n_channel']
 )
 print(f"Loaded {len(image_files)} images, label distribution: {collections.Counter(labels)}")
-print(f"Images shape: {len(image_files)}, Bboxes shape: {bboxes.shape}")
+print(f"Images shape: {len(image_files)}, Labels shape: {len(labels)}")
 
 # DataLoader
-dataset = CustomDataset(image_files, labels, bboxes, transform)
+dataset = CustomDataset(image_files, labels, transform)
 train_loader = DataLoader(dataset, batch_size=args['batch_size'], shuffle=True)
 
 # Models and optimizers
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 print(f"Using device: {device}")
+autoencoder = Autoencoder(args).to(device)
 generator = Generator(args).to(device)
 discriminator = Discriminator(args).to(device)
-criterion_bce = nn.BCEWithLogitsLoss().to(device)
+
+# Autoencoder optimizer
+ae_optimizer = torch.optim.Adam(autoencoder.parameters(), lr=args['lr'], betas=(0.5, 0.999))
 criterion_mse = nn.MSELoss().to(device)
+
+# GAN optimizers
+criterion_bce = nn.BCEWithLogitsLoss().to(device)
 criterion_ce = nn.CrossEntropyLoss().to(device)
 gen_optim = torch.optim.Adam(generator.parameters(), lr=args['lr'], betas=(0.5, 0.999))
 disc_optim = torch.optim.Adam(discriminator.parameters(), lr=args['disc_lr'], betas=(0.5, 0.999))
 
-# Training loop
+# Pre-train autoencoder
+print("Pre-training autoencoder...")
+autoencoder.train()
+for epoch in range(10):  # Fixed 10 epochs for pre-training, as per IBM BAGAN
+    ae_loss_total = 0.0
+    for images, _ in train_loader:
+        images = images.to(device)
+        ae_optimizer.zero_grad()
+        x_recon = autoencoder(images)
+        ae_loss = criterion_mse(x_recon, images)
+        ae_loss.backward()
+        ae_optimizer.step()
+        ae_loss_total += ae_loss.item() * images.size(0)
+    ae_loss_total /= len(train_loader.dataset)
+    print(f"AE Epoch: {epoch} \tAE Loss: {ae_loss_total:.6f}")
+
+# Initialize generator with autoencoder's decoder weights
+generator_dict = generator.state_dict()
+ae_dict = autoencoder.state_dict()
+generator_dict['fc'] = ae_dict['fc_dec']
+generator_dict['deconv'] = ae_dict['decoder']
+generator.load_state_dict(generator_dict)
+
+# Training loop for GAN
 best_loss = np.inf
 for epoch in range(args['epochs']):
     generator.train()
@@ -53,11 +84,10 @@ for epoch in range(args['epochs']):
     g_loss_total = 0.0
     d_loss_total = 0.0
     img_loss_total = 0.0
-    bbox_loss_total = 0.0
     class_loss_total = 0.0
 
-    for images, labs, bboxes_batch in train_loader:
-        images, labs, bboxes_batch = images.to(device), labs.to(device), bboxes_batch.to(device).float()
+    for images, labs in train_loader:
+        images, labs = images.to(device), labs.to(device)
         batch_size = images.size(0)
 
         # Real and fake labels
@@ -68,16 +98,15 @@ for epoch in range(args['epochs']):
         discriminator.zero_grad()
         
         # Real images
-        real_score, class_score, bbox_pred = discriminator(images)
+        real_score, class_score = discriminator(images)
         d_loss_real = criterion_bce(real_score, real_label)
         d_class_loss = criterion_ce(class_score, labs - 1)
-        d_bbox_loss = criterion_mse(bbox_pred, bboxes_batch)
-        d_loss = d_loss_real + d_class_loss + args['bbox_lambda'] * d_bbox_loss
+        d_loss = d_loss_real + d_class_loss
 
         # Fake images
         z = torch.randn(batch_size, args['n_z'], device=device)
-        fake_images, fake_bboxes = generator(z, labs - 1, bboxes_batch)
-        fake_score, fake_class_score, fake_bbox_pred = discriminator(fake_images.detach())
+        fake_images = generator(z, labs - 1)
+        fake_score, fake_class_score = discriminator(fake_images.detach())
         d_loss_fake = criterion_bce(fake_score, fake_label)
         d_loss += d_loss_fake
 
@@ -86,11 +115,10 @@ for epoch in range(args['epochs']):
 
         # --- Train Generator ---
         generator.zero_grad()
-        fake_score, fake_class_score, fake_bbox_pred = discriminator(fake_images)
+        fake_score, fake_class_score = discriminator(fake_images)
         g_loss = criterion_bce(fake_score, real_label)
         g_class_loss = criterion_ce(fake_class_score, labs - 1)
-        g_bbox_loss = criterion_mse(fake_bboxes, bboxes_batch)
-        g_total_loss = g_loss + g_class_loss + args['bbox_lambda'] * g_bbox_loss
+        g_total_loss = g_loss + g_class_loss
 
         g_total_loss.backward()
         gen_optim.step()
@@ -98,28 +126,26 @@ for epoch in range(args['epochs']):
         g_loss_total += g_loss.item() * batch_size
         d_loss_total += d_loss.item() * batch_size
         img_loss_total += g_loss.item() * batch_size
-        bbox_loss_total += g_bbox_loss.item() * batch_size
         class_loss_total += g_class_loss.item() * batch_size
 
     g_loss_total /= len(train_loader.dataset)
     d_loss_total /= len(train_loader.dataset)
     img_loss_total /= len(train_loader.dataset)
-    bbox_loss_total /= len(train_loader.dataset)
     class_loss_total /= len(train_loader.dataset)
-    print(f"Epoch: {epoch} \tG Loss: {g_loss_total:.6f} \tD Loss: {d_loss_total:.6f} \tImg: {img_loss_total:.6f} \tBbox: {bbox_loss_total:.6f} \tClass: {class_loss_total:.6f}")
+    print(f"GAN Epoch: {epoch} \tG Loss: {g_loss_total:.6f} \tD Loss: {d_loss_total:.6f} \tImg: {img_loss_total:.6f} \tClass: {class_loss_total:.6f}")
 
     # Save losses to CSV
     loss_dict = {
         'g_loss': g_loss_total,
         'd_loss': d_loss_total,
         'img_loss': img_loss_total,
-        'bbox_loss': bbox_loss_total,
         'class_loss': class_loss_total
     }
     save_losses(loss_dict, modpth, 'balance_gan', epoch)
 
     if g_loss_total < best_loss and args['save']:
         print('Saving..')
+        torch.save(autoencoder.state_dict(), os.path.join(modpth, 'bst_ae.pth'))
         torch.save(generator.state_dict(), os.path.join(modpth, 'bst_gen.pth'))
         torch.save(discriminator.state_dict(), os.path.join(modpth, 'bst_disc.pth'))
         best_loss = g_loss_total

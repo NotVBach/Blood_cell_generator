@@ -15,6 +15,6 @@ args = {
     'output_dir': '',           # path to output
     'image_size': (128, 128),   # resize images to this size
     'disc_lr': 0.0002,          # learning rate for GAN discriminator
-    'num_classes': 8,           
+    'num_classes': 7,           
     'method': 'deep_smote'      # options: 'deep_smote' or 'balance_gan'
 }

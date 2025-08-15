@@ -6,6 +6,7 @@ import time
 import json
 import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 from PIL import Image
 from balance_gan.models import Generator
 from utils.bagan import generate_balanced_inputs
@@ -26,19 +27,20 @@ t0 = time.time()
 # Paths
 base_dir = args['base_dir']
 dtrnimg = os.path.join(base_dir, 'train')
-modpth = os.path.join(base_dir, 'models', 'balance_gan')
-out_img_dir = os.path.join(base_dir, 'synthetic', 'balance_gan', 'train')
-out_lab_dir = os.path.join(base_dir, 'synthetic', 'balance_gan', 'annotations')
+modpth = os.path.join(args['output_dir'], 'models')
+out_img_dir = os.path.join(args['output_dir'], 'train')
+out_lab_dir = os.path.join(args['output_dir'], 'annotations')
 
 os.makedirs(out_img_dir, exist_ok=True)
 os.makedirs(out_lab_dir, exist_ok=True)
+os.makedirs(modpth, exist_ok=True)
 
 # Load data
-image_files, labels, bboxes, transform, data = load_data(
+image_files, labels, transform, data = load_data(
     base_dir, 'train', image_size=args['image_size'], n_channel=args['n_channel']
 )
 print(f"Loaded {len(image_files)} images, label distribution: {collections.Counter(labels)}")
-print(f"Images shape: {len(image_files)}, Labels shape: {len(labels)}, Bboxes shape: {bboxes.shape}")
+print(f"Images shape: {len(image_files)}, Labels shape: {len(labels)}")
 
 # Load images
 images = np.array([transform(Image.open(p).convert('RGB')).numpy() for p in image_files])
@@ -55,48 +57,41 @@ generator.eval()
 
 # Balance classes
 max_samples = max(collections.Counter(labels).values())
-imbal = [max_samples] * 8
-resx, resy, res_bboxes = [], [], []
+imbal = [max_samples] * args['num_classes']
+resx, resy = [], []
 new_annotations = data['images'].copy()
 new_anns = data['annotations'].copy()
 new_image_id = max(img['id'] for img in data['images']) + 1
 new_annotation_id = max(ann['id'] for ann in data['annotations']) + 1
 
 # Generate synthetic samples
-image_size_scalar = args['image_size'][0]  # Assume square images
 for i in range(1, 9):
-    xclass, yclass, bbox_class = biased_get_class(i, images, labels, bboxes)
-    print(f"Class {i} shape: {xclass.shape}, Labels: {yclass.shape}, Bboxes: {bbox_class.shape}")
+    xclass, yclass = biased_get_class(i, images, labels)
+    print(f"Class {i} shape: {xclass.shape}, Labels: {yclass.shape}")
     
     n = imbal[i-1] - len(yclass)
     if n > 0:
         try:
-            z_samp, class_labels, bbox_samp = generate_balanced_inputs(
-                yclass, bbox_class, n, i, args['n_z']
-            )
+            z_samp, class_labels = generate_balanced_inputs(yclass, n, i, args['n_z'])
         except ValueError as e:
             print(f"Error generating inputs for class {i}: {e}")
             continue
         
         z_samp_t = torch.tensor(z_samp, dtype=torch.float32).to(device)
         class_labels_t = torch.tensor(np.argmax(class_labels, axis=1), dtype=torch.long).to(device)
-        bbox_samp_t = torch.tensor(bbox_samp, dtype=torch.float32).to(device)
         
-        ximg_all, bbox_img_all = [], []
+        ximg_all = []
         for j in range(0, len(z_samp), args['batch_size']):
             batch_z = z_samp_t[j:j+args['batch_size']]
             batch_labels = class_labels_t[j:j+args['batch_size']]
-            batch_bboxes = bbox_samp_t[j:j+args['batch_size']]
             with torch.no_grad():
-                ximg, bbox_img = generator(batch_z, batch_labels, batch_bboxes)
+                ximg = generator(batch_z, batch_labels)
             ximg_all.append(ximg.cpu().numpy())
-            bbox_img_all.append(bbox_img.cpu().numpy())
         ximn = np.concatenate(ximg_all, axis=0)
-        bbox_img = np.concatenate(bbox_img_all, axis=0)
-        print(f"Generated images: {ximn.shape}, Bboxes: {bbox_img.shape}")
+        print(f"Generated images: {ximn.shape}")
         
         # Save synthetic images and update annotations
-        for idx, (img, bbox) in enumerate(zip(ximn, bbox_img)):
+        for idx, img in enumerate(ximn):
             img = (img * 0.5 + 0.5).clip(0, 1)
             img = (img * 255).astype(np.uint8).transpose(1, 2, 0)
             img_pil = Image.fromarray(img)
@@ -112,10 +107,10 @@ for i in range(1, 9):
             new_anns.append({
                 'id': new_annotation_id,
                 'image_id': new_image_id,
-                'bbox': [float(x) for x in (bbox * np.array([image_size_scalar] * 4))],
-                'area': float(bbox[2] * bbox[3] * image_size_scalar * image_size_scalar),
-                'iscrowd': 0,
                 'category_id': i,
+                'area': 0,
+                'bbox': [],
+                'iscrowd': 0,
                 'segmentation': []
             })
             new_image_id += 1
@@ -123,13 +118,11 @@ for i in range(1, 9):
         
         resx.append(ximn)
         resy.append(np.array([i] * n))
-        res_bboxes.append(bbox_img)
 
 # Combine and save
 resx1 = np.vstack(resx) if resx else np.array([])
 resy1 = np.hstack(resy) if resy else np.array([])
-res_bboxes1 = np.vstack(res_bboxes) if res_bboxes else np.array([])
-print(f"Synthetic images: {resx1.shape}, Labels: {resy1.shape}, Bboxes: {res_bboxes1.shape}")
+print(f"Synthetic images: {resx1.shape}, Labels: {resy1.shape}")
 
 data['images'] = new_annotations
 data['annotations'] = new_anns

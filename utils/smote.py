@@ -1,7 +1,7 @@
 import numpy as np
 from sklearn.neighbors import NearestNeighbors
 
-def G_SM1(X, y, n_to_sample, cl):
+def G_SM(X, y, n_to_sample, cl):
     n_neigh = 6
     nn = NearestNeighbors(n_neighbors=n_neigh, n_jobs=1)
     nn.fit(X)
@@ -18,6 +18,6 @@ def G_SM1(X, y, n_to_sample, cl):
 
     return samples, [cl] * n_to_sample
 
-def biased_get_class1(c, images, labels):
+def biased_get_class(c, images, labels):
     mask = labels == c
     return images[mask], labels[mask]
