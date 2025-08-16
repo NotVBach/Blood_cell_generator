@@ -4,6 +4,7 @@ from torch.utils.data import DataLoader
 import numpy as np
 import os
 import time
+import collections
 import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from balance_gan.models import Autoencoder, Generator, Discriminator
