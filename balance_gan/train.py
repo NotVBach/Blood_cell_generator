@@ -5,10 +5,7 @@ import numpy as np
 import os
 import time
 import sys
-import collections
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-
-from PIL import Image
 from balance_gan.models import Autoencoder, Generator, Discriminator
 from utils.dataset import CustomDataset, load_data
 from utils.save_losses import save_losses
@@ -56,7 +53,7 @@ disc_optim = torch.optim.Adam(discriminator.parameters(), lr=args['disc_lr'], be
 # Pre-train autoencoder
 print("Pre-training autoencoder...")
 autoencoder.train()
-for epoch in range(10):  # Fixed 10 epochs for pre-training, as per IBM BAGAN
+for epoch in range(10):  # 10 epochs for pre-training
     ae_loss_total = 0.0
     for images, _ in train_loader:
         images = images.to(device)
@@ -72,8 +69,10 @@ for epoch in range(10):  # Fixed 10 epochs for pre-training, as per IBM BAGAN
 # Initialize generator with autoencoder's decoder weights
 generator_dict = generator.state_dict()
 ae_dict = autoencoder.state_dict()
-generator_dict['fc'] = ae_dict['fc_dec']
-generator_dict['deconv'] = ae_dict['decoder']
+# Copy deconv layers (shared structure)
+for key in generator_dict.keys():
+    if 'deconv' in key:
+        generator_dict[key] = ae_dict[f'decoder.{key.split("deconv.")[-1]}']
 generator.load_state_dict(generator_dict)
 
 # Training loop for GAN
@@ -132,7 +131,7 @@ for epoch in range(args['epochs']):
     d_loss_total /= len(train_loader.dataset)
     img_loss_total /= len(train_loader.dataset)
     class_loss_total /= len(train_loader.dataset)
-    print(f"GAN Epoch: {epoch} \tG Loss: {g_loss_total:.6f} \tD Loss: {d_loss_total:.6f} \tImg: {img_loss_total:.6f} \tClass: {class_loss_total:.6f}")
+    print(f"Epoch: {epoch} \tG Loss: {g_loss_total:.6f} \tD Loss: {d_loss_total:.6f} \tImg: {img_loss_total:.6f} \tClass: {class_loss_total:.6f}")
 
     # Save losses to CSV
     loss_dict = {

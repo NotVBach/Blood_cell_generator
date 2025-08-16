@@ -6,7 +6,6 @@ import time
 import json
 import sys
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-
 from PIL import Image
 from balance_gan.models import Generator
 from utils.bagan import generate_balanced_inputs
@@ -33,7 +32,6 @@ out_lab_dir = os.path.join(args['output_dir'], 'annotations')
 
 os.makedirs(out_img_dir, exist_ok=True)
 os.makedirs(out_lab_dir, exist_ok=True)
-os.makedirs(modpth, exist_ok=True)
 
 # Load data
 image_files, labels, transform, data = load_data(
@@ -57,7 +55,7 @@ generator.eval()
 
 # Balance classes
 max_samples = max(collections.Counter(labels).values())
-imbal = [max_samples] * args['num_classes']
+imbal = [max_samples] * 8
 resx, resy = [], []
 new_annotations = data['images'].copy()
 new_anns = data['annotations'].copy()

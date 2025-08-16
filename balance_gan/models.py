@@ -107,7 +107,7 @@ class Discriminator(nn.Module):
         self.n_channel = args['n_channel']
         self.dim_h = args['dim_h']
         self.image_size = args['image_size']
-        self.num_classes = args['num_classes']
+        self.num_classes = 8
         
         self.final_dim = (self.image_size[0] // 16, self.image_size[1] // 16)
         
