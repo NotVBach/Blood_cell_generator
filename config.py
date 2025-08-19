@@ -12,9 +12,11 @@ args = {
     'save': True,               # save weights at each epoch if True
     'dataset': 'defect',        # specify the dataset
     'base_dir': 'noaug',        # path to dataset
-    'output_dir': '',           # path to output
+    'output_dir': 'synthetic',           # path to output
     'image_size': (128, 128),   # resize images to this size
     'disc_lr': 0.0002,          # learning rate for GAN discriminator
     'num_classes': 7,           
-    'method': 'deep_smote'      # options: 'deep_smote' or 'balance_gan'
+    'method': 'deep_smote',     # options: 'deep_smote' or 'balance_gan'
+    'ndf': 64,  # Number of discriminator filters
+    'triplet_margin': 1.0  # Margin for triplet loss
 }

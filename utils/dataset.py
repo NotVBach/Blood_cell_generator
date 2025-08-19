@@ -1,3 +1,4 @@
+# utils/dataset.py
 import torch
 from torch.utils.data import Dataset
 from PIL import Image
@@ -5,6 +6,7 @@ import torchvision.transforms as transforms
 import os
 import json
 import numpy as np
+from config import args
 
 class CustomDataset(Dataset):
     def __init__(self, image_files, labels, transform):
@@ -38,8 +40,9 @@ def load_data(base_dir, split='train', image_size=(32, 32), n_channel=3):
     image_id_to_label = {}
     for ann in data['annotations']:
         img_id = ann['image_id']
-        if img_id in image_id_to_filename:
-            image_id_to_label[img_id] = ann['category_id']
+        label = ann['category_id']
+        if img_id in image_id_to_filename and 1 <= label <= args['num_classes']:  # Validate label
+            image_id_to_label[img_id] = label
 
     valid_image_ids = list(image_id_to_label.keys())
     image_files = [os.path.join(dtrnimg, image_id_to_filename[img_id]) 
@@ -49,6 +52,10 @@ def load_data(base_dir, split='train', image_size=(32, 32), n_channel=3):
     assert len(image_files) == len(labels), (
         f"Array size mismatch: image_files ({len(image_files)}), labels ({len(labels)})"
     )
+    invalid_labels = [l for l in labels if l < 1 or l > 8]
+    if invalid_labels:
+        print(f"Warning: Found invalid labels: {invalid_labels}")
+        raise ValueError("Labels must be in range [1, 8]")
 
     print(f"Loaded {len(image_files)} images with annotations")
     return image_files, labels, transform, data
